@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "repository": "DPeak0/ConstructionOwnerClassifier",
-  "version": "1.1.1",
-  "published_at": "2026-08-09T01:11:19+00:00",
-  "release_url": "https://github.com/DPeak0/ConstructionOwnerClassifier/releases/tag/v1.1.1",
-  "notes": "施工责任人图片分类器 v1.1.1 正式发布",
+  "version": "1.1.2",
+  "published_at": "2026-08-09T13:46:53+00:00",
+  "release_url": "https://github.com/DPeak0/ConstructionOwnerClassifier/releases/tag/v1.1.2",
+  "notes": "?? PP-OCRv6 Small ????,???????????? GLM-4.6V-Flash AI ??,????????????????????,????????????????????",
   "installer": {
-    "name": "ConstructionOwnerClassifier-Setup-1.1.1.exe",
-    "url": "https://github.com/DPeak0/ConstructionOwnerClassifier/releases/download/v1.1.1/ConstructionOwnerClassifier-Setup-1.1.1.exe",
-    "size": 77479888,
-    "sha256": "d366a6af2006d7bbf3feff594754ea32d470c2635238bf5ab63dbcd7aba7f6e6"
+    "name": "ConstructionOwnerClassifier-Setup-1.1.2.exe",
+    "url": "https://github.com/DPeak0/ConstructionOwnerClassifier/releases/download/v1.1.2/ConstructionOwnerClassifier-Setup-1.1.2.exe",
+    "size": 98691633,
+    "sha256": "7d84882a96ac3aea4a27099ac0b3b27adfa6897feef1a9db023fe2da363236c6"
   }
 }
