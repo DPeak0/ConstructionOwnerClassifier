@@ -37,8 +37,15 @@ jobs:
           if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid version: $version" }
           $sourceVersion = python -c "import sys; sys.path.insert(0, 'src'); import owner_classifier; print(owner_classifier.__version__)"
           if ($version -ne $sourceVersion) { throw "Version files do not match." }
-          gh release view "v$version" 2>$null
-          if ($LASTEXITCODE -eq 0) { throw "Release v$version already exists." }
+          $releaseUri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/v$version"
+          $releaseResponse = Invoke-WebRequest -Uri $releaseUri -Headers @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+          } -SkipHttpErrorCheck
+          if ($releaseResponse.StatusCode -eq 200) { throw "Release v$version already exists." }
+          if ($releaseResponse.StatusCode -ne 404) {
+            throw "Unable to check existing release: HTTP $($releaseResponse.StatusCode)"
+          }
           "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Install Inno Setup
