@@ -17,3 +17,21 @@ tests/fixtures/*.jpg
 /曹华斌/
 /郭成喜/
 /陈万智/
+
+# Local credentials and signing material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.cer
+*.crt
+credentials.json
+credentials.*.json
+secrets.json
+secrets.*.json
+.pypirc
+.npmrc
+.secrets/
