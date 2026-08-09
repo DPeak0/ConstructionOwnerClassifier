@@ -10,7 +10,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 from PIL import Image
 
-from owner_classifier.app import ImagePreview, MainWindow
+from owner_classifier.app import ImagePreview, MainWindow, native_path_text
+from owner_classifier.database import Database
 from owner_classifier.models import ClassificationRecord, RecordStatus
 
 
@@ -34,6 +35,33 @@ def test_main_window_has_only_task_review_and_settings(monkeypatch, tmp_path: Pa
     assert not hasattr(window.settings_page, "save_button")
     assert window.table.width() > 700
     window.close()
+
+
+def test_main_window_starts_with_empty_task_even_when_database_has_records(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    database = Database()
+    task_id = database.create_task("C:/previous/input", "C:/previous/output/session")
+    database.save_record(ClassificationRecord("C:/previous/input/photo.jpg", task_id=task_id))
+    database.close()
+
+    app = application()
+    window = MainWindow()
+    app.processEvents()
+
+    assert window.input_edit.text() == ""
+    assert window.output_edit.text() == ""
+    assert window.records == []
+    assert window.table.rowCount() == 0
+    assert window.current_task_id is None
+    window.close()
+
+
+def test_native_path_text_uses_platform_separators():
+    result = native_path_text("C:/work/photos")
+    assert result == os.path.normpath("C:/work/photos")
+    if os.name == "nt":
+        assert result == r"C:\work\photos"
+        assert "/" not in result
 
 
 def test_review_confirmation_selects_and_displays_next_image(monkeypatch, tmp_path: Path):

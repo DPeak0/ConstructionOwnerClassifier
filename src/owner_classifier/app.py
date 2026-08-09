@@ -21,10 +21,16 @@ from .dialogs import SettingsPage
 from .models import ClassificationRecord, RecordStatus
 from .scanner import scan_images
 from .services import ClassificationService
+from .single_instance import SingleInstanceGuard
 from .worker import BatchWorker
 
 
 APP_NAME = "施工责任人图片分类器"
+INSTANCE_MUTEX_NAME = "Local\\ConstructionOwnerClassifier-5E4A77E2-62B8-4F57-9509-93B9EA343B22"
+
+
+def native_path_text(value: str | Path) -> str:
+    return os.path.normpath(str(value))
 
 
 class PreviewCanvas(QLabel):
@@ -275,7 +281,6 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1120, 700)
         self.setCentralWidget(self._build_shell())
         self._apply_style()
-        self._restore_latest_task()
         if self.settings.update_auto_check and getattr(sys, "frozen", False):
             QTimer.singleShot(2500, lambda: self.settings_page.check_for_updates(silent=True))
 
@@ -565,20 +570,24 @@ class MainWindow(QMainWindow):
     def _choose_input(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "选择输入目录", self.input_edit.text())
         if directory:
-            self.input_edit.setText(directory)
+            self.input_edit.setText(native_path_text(directory))
             if not self.output_edit.text():
-                self.output_edit.setText(str(Path(directory).parent))
+                self.output_edit.setText(native_path_text(Path(directory).parent))
 
     def _choose_output(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "选择结果保存位置", self.output_edit.text())
         if directory:
-            self.output_edit.setText(directory)
+            self.output_edit.setText(native_path_text(directory))
 
     def _scan(self) -> None:
         try:
-            input_dir = Path(self.input_edit.text().strip())
-            output_dir = Path(self.output_edit.text().strip()) if self.output_edit.text().strip() else input_dir.parent
-            self.output_edit.setText(str(output_dir))
+            input_dir = Path(self.input_edit.text().strip()).expanduser().resolve()
+            output_dir = (
+                Path(self.output_edit.text().strip()).expanduser().resolve()
+                if self.output_edit.text().strip() else input_dir.parent
+            )
+            self.input_edit.setText(native_path_text(input_dir))
+            self.output_edit.setText(native_path_text(output_dir))
             self.images = scan_images(input_dir)
             self.records = [ClassificationRecord(source_path=str(path)) for path in self.images]
             self.current_task_id = None
@@ -823,28 +832,6 @@ class MainWindow(QMainWindow):
         if self.session_output and self.session_output.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.session_output)))
 
-    def _load_task(self, task_id: int, input_dir: str, output_dir: str, status: str) -> None:
-        records = self.database.task_records(task_id)
-        self.current_task_id = task_id
-        self.input_edit.setText(input_dir)
-        self.output_edit.setText(str(Path(output_dir).parent))
-        self.session_output = Path(output_dir)
-        self.records = records
-        self.images = [Path(record.source_path) for record in records]
-        self._populate_task_table()
-        self.start_button.setEnabled(bool(records))
-        self.open_button.setEnabled(self.session_output.exists())
-        self.status_label.setText(f"已恢复上次任务：{status}")
-        self.progress.setMaximum(max(len(records), 1))
-        self.progress.setValue(len(records))
-        self._update_counts()
-        self._refresh_review_table()
-
-    def _restore_latest_task(self) -> None:
-        latest = self.database.latest_task()
-        if latest:
-            self._load_task(*latest)
-
     def _settings_saved(self) -> None:
         self.settings = self.database.load_settings()
         self.status_label.setText("设置已自动保存")
@@ -903,9 +890,16 @@ def main() -> int:
     icon_path = resource_root / "assets" / "app.ico"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
-    window = MainWindow()
-    window.show()
-    return app.exec()
+    instance_guard = SingleInstanceGuard(INSTANCE_MUTEX_NAME)
+    if not instance_guard.acquire():
+        QMessageBox.information(None, "程序已在运行", "施工责任人图片分类器已经在运行，请勿重复打开。")
+        return 0
+    try:
+        window = MainWindow()
+        window.show()
+        return app.exec()
+    finally:
+        instance_guard.release()
 
 
 if __name__ == "__main__":
