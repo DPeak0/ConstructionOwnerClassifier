@@ -61,14 +61,22 @@ jobs:
         run: |
           [IO.File]::WriteAllText("$PWD\build\release-notes.txt", $env:RELEASE_NOTES, [Text.UTF8Encoding]::new($false))
           $version = "${{ steps.version.outputs.version }}"
-          $installer = "dist\施工责任人图片分类器-Setup-$version.exe"
+          $builtInstaller = "dist\施工责任人图片分类器-Setup-$version.exe"
+          $installer = "dist\ConstructionOwnerClassifier-Setup-$version.exe"
+          Copy-Item -LiteralPath $builtInstaller -Destination $installer
           python scripts\create_update_manifest.py --version $version --installer $installer --output update\update-manifest.json --notes-file build\release-notes.txt
 
       - name: Publish GitHub Release
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          gh release create "v$version" "dist\施工责任人图片分类器-Setup-$version.exe" "update\update-manifest.json" --repo "$env:GITHUB_REPOSITORY" --title "施工责任人图片分类器 $version" --notes-file build\release-notes.txt
+          python scripts\publish_github_release.py `
+            --repository "$env:GITHUB_REPOSITORY" `
+            --tag "v$version" `
+            --title "施工责任人图片分类器 $version" `
+            --notes-file build\release-notes.txt `
+            --asset "dist\ConstructionOwnerClassifier-Setup-$version.exe" `
+            --asset "update\update-manifest.json"
 
       - name: Update release channel manifest
         shell: pwsh
