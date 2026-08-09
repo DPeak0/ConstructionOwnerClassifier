@@ -5,7 +5,14 @@ import hashlib
 import pytest
 import requests
 
-from owner_classifier.updater import UpdateError, UpdateInfo, UpdateService, version_key
+from owner_classifier.updater import (
+    MANIFEST_URLS,
+    RELEASE_MANIFEST_URL,
+    UpdateError,
+    UpdateInfo,
+    UpdateService,
+    version_key,
+)
 
 
 def manifest(content: bytes, version: str = "1.2.0") -> dict:
@@ -73,6 +80,12 @@ def test_update_check_falls_back_without_github_api(tmp_path):
     assert info and info.version == "1.2.0"
     assert len(session.calls) == 2
     assert service.check_for_update("1.2.0") is None
+
+
+def test_manifest_sources_include_verified_china_relays():
+    assert f"https://gh-proxy.com/{RELEASE_MANIFEST_URL}" in MANIFEST_URLS
+    assert f"https://ghproxy.net/{RELEASE_MANIFEST_URL}" in MANIFEST_URLS
+    assert all("ghp.ci" not in url and "moeyy.cn" not in url for url in MANIFEST_URLS)
 
 
 def test_update_download_uses_relay_and_verifies_hash(tmp_path):

@@ -24,6 +24,8 @@ MANIFEST_URLS = (
     "https://fastly.jsdelivr.net/gh/DPeak0/ConstructionOwnerClassifier@release-channel/update/latest.json",
     "https://gcore.jsdelivr.net/gh/DPeak0/ConstructionOwnerClassifier@release-channel/update/latest.json",
     "https://raw.githubusercontent.com/DPeak0/ConstructionOwnerClassifier/release-channel/update/latest.json",
+    f"https://gh-proxy.com/{RELEASE_MANIFEST_URL}",
+    f"https://ghproxy.net/{RELEASE_MANIFEST_URL}",
     RELEASE_MANIFEST_URL,
 )
 DOWNLOAD_RELAYS = (
