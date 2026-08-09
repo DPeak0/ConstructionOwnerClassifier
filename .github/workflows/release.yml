@@ -70,7 +70,7 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          python scripts\publish_github_release.py `
+          & .\.build-venv\Scripts\python.exe scripts\publish_github_release.py `
             --repository "$env:GITHUB_REPOSITORY" `
             --tag "v$version" `
             --title "施工责任人图片分类器 $version" `
