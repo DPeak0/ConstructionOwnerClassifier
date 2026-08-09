@@ -1,0 +1,83 @@
+name: Formal Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: Release notes shown in the app and on GitHub Releases
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: formal-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-2022
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_NOTES: ${{ inputs.release_notes }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Resolve and validate version
+        id: version
+        shell: pwsh
+        run: |
+          $version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid version: $version" }
+          $sourceVersion = python -c "import sys; sys.path.insert(0, 'src'); import owner_classifier; print(owner_classifier.__version__)"
+          if ($version -ne $sourceVersion) { throw "Version files do not match." }
+          gh release view "v$version" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "Release v$version already exists." }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build and test installer
+        shell: pwsh
+        run: .\scripts\build.ps1 -BuildInstaller
+
+      - name: Create signed-by-hash update manifest
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllText("$PWD\build\release-notes.txt", $env:RELEASE_NOTES, [Text.UTF8Encoding]::new($false))
+          $version = "${{ steps.version.outputs.version }}"
+          $installer = "dist\施工责任人图片分类器-Setup-$version.exe"
+          python scripts\create_update_manifest.py --version $version --installer $installer --output update\update-manifest.json --notes-file build\release-notes.txt
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          gh release create "v$version" "dist\施工责任人图片分类器-Setup-$version.exe" "update\update-manifest.json" --repo "$env:GITHUB_REPOSITORY" --title "施工责任人图片分类器 $version" --notes-file build\release-notes.txt
+
+      - name: Update release channel manifest
+        shell: pwsh
+        run: |
+          $repo = $env:GITHUB_REPOSITORY
+          gh api "repos/$repo/git/ref/heads/release-channel" --silent 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh api --method POST "repos/$repo/git/refs" -f ref="refs/heads/release-channel" -f sha="$env:GITHUB_SHA"
+            if ($LASTEXITCODE -ne 0) { throw "Unable to create release-channel branch." }
+          }
+          $existing = gh api "repos/$repo/contents/update/latest.json?ref=release-channel" 2>$null
+          $existingSha = ""
+          if ($LASTEXITCODE -eq 0) { $existingSha = ($existing | ConvertFrom-Json).sha }
+          $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes("update\update-manifest.json"))
+          $arguments = @("--method", "PUT", "repos/$repo/contents/update/latest.json", "-f", "message=Release ${{ steps.version.outputs.version }}", "-f", "content=$content", "-f", "branch=release-channel")
+          if ($existingSha) { $arguments += @("-f", "sha=$existingSha") }
+          gh api @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Unable to update release-channel manifest." }
+          try { Invoke-WebRequest "https://purge.jsdelivr.net/gh/$repo@release-channel/update/latest.json" -UseBasicParsing | Out-Null } catch { Write-Warning $_ }
