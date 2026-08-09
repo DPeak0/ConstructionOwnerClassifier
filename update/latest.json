@@ -2,13 +2,13 @@
   "schema": 1,
   "repository": "DPeak0/ConstructionOwnerClassifier",
   "version": "1.1.1",
-  "published_at": "2026-08-09T00:58:15+00:00",
+  "published_at": "2026-08-09T01:11:19+00:00",
   "release_url": "https://github.com/DPeak0/ConstructionOwnerClassifier/releases/tag/v1.1.1",
-  "notes": "?????????? v1.1.1 ????",
+  "notes": "施工责任人图片分类器 v1.1.1 正式发布",
   "installer": {
-    "name": "施工责任人图片分类器-Setup-1.1.1.exe",
-    "url": "https://github.com/DPeak0/ConstructionOwnerClassifier/releases/download/v1.1.1/%E6%96%BD%E5%B7%A5%E8%B4%A3%E4%BB%BB%E4%BA%BA%E5%9B%BE%E7%89%87%E5%88%86%E7%B1%BB%E5%99%A8-Setup-1.1.1.exe",
-    "size": 77478188,
-    "sha256": "85b45f961a8aa886a75cff1211afb642e524741343b4e844b485e83857e3187c"
+    "name": "ConstructionOwnerClassifier-Setup-1.1.1.exe",
+    "url": "https://github.com/DPeak0/ConstructionOwnerClassifier/releases/download/v1.1.1/ConstructionOwnerClassifier-Setup-1.1.1.exe",
+    "size": 77479888,
+    "sha256": "d366a6af2006d7bbf3feff594754ea32d470c2635238bf5ab63dbcd7aba7f6e6"
   }
 }
