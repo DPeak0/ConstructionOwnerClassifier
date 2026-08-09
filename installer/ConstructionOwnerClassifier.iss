@@ -1,5 +1,5 @@
 ﻿#define MyAppName "施工责任人图片分类器"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.1.2"
 #define MyAppExeName "ConstructionOwnerClassifier.exe"
 
 [Setup]
@@ -14,7 +14,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist
-OutputBaseFilename=施工责任人图片分类器-Setup-1.1.1
+OutputBaseFilename=施工责任人图片分类器-Setup-1.1.2
 SetupIconFile=..\assets\app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/max
@@ -23,7 +23,7 @@ WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
 UsePreviousAppDir=yes
-VersionInfoVersion=1.1.1.0
+VersionInfoVersion=1.1.2.0
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 

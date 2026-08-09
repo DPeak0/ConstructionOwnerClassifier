@@ -1,6 +1,9 @@
 .build-venv/
 .pytest_cache/
 .pytest_tmp*/
+.pytest-tmp-*/
+.visual-appdata*/
+*-modern*.png
 build/
 dist/
 *.py[cod]

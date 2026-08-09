@@ -4,6 +4,7 @@ import pytest
 
 from owner_classifier.engine import RecognitionEngine
 from owner_classifier.models import AppSettings
+from owner_classifier.models import RecordStatus
 from owner_classifier.ocr import create_local_provider
 
 
@@ -22,6 +23,13 @@ def test_supplied_samples_resolve_to_parent_owner():
     for path in samples:
         record = engine.classify(path)
         expected = "曹华兵" if path.parent.name == "曹华斌" else path.parent.name
-        if record.candidate_owner != expected:
-            mismatches.append((path.name, expected, record.candidate_owner, record.confidence))
+        if (
+            record.candidate_owner != expected
+            or record.owner != expected
+            or record.status != RecordStatus.CONFIRMED
+        ):
+            mismatches.append((
+                path.name, expected, record.owner, record.candidate_owner,
+                str(record.status), record.confidence,
+            ))
     assert not mismatches

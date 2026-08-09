@@ -2,8 +2,8 @@
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 
-datas = collect_data_files("rapidocr_onnxruntime") + [("assets/app.ico", "assets")]
-hiddenimports = collect_submodules("rapidocr_onnxruntime")
+datas = collect_data_files("rapidocr") + [("assets/app.ico", "assets")]
+hiddenimports = collect_submodules("rapidocr") + collect_submodules("zai")
 
 a = Analysis(
     ["main.py"],
@@ -15,7 +15,7 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        "PyQt5", "tkinter", "matplotlib", "pandas", "lxml", "cryptography",
+        "PyQt5", "tkinter", "matplotlib", "pandas", "lxml",
         "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtQuickWidgets",
         "PySide6.QtPdf", "PySide6.QtPdfWidgets", "PySide6.QtVirtualKeyboard",
         "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",

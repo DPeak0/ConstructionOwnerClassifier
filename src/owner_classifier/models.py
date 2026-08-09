@@ -13,6 +13,7 @@ class RecordStatus(StrEnum):
     CONFIRMED = "已确认"
     CLASSIFIED = "已分类"
     UNRECOGNIZED = "未识别"
+    NO_WATERMARK = "无水印"
     FAILED = "失败"
 
 
@@ -56,6 +57,10 @@ class OwnerMatch:
     confidence: float = 0.0
     matched_text: str = ""
     candidates: list[tuple[str, float]] = field(default_factory=list)
+    margin: float = 0.0
+    label_score: float = 0.0
+    watermark_score: float = 0.0
+    spelling_ambiguous: bool = False
 
 
 @dataclass(slots=True)
@@ -77,6 +82,17 @@ class ClassificationRecord:
     processed_at: str = ""
     record_id: int | None = None
     task_id: int | None = None
+    candidate_owners: list[tuple[str, float]] = field(default_factory=list)
+    watermark_score: float = 0.0
+    owner_margin: float = 0.0
+    recognition_evidence: str = ""
+    ai_used: bool = False
+    ai_provider: str = ""
+    ai_model: str = ""
+    ai_decision: str = ""
+    ai_latency_ms: int = 0
+    ai_error: str = ""
+    decision_source: str = "local"
 
     @property
     def file_name(self) -> str:
@@ -90,15 +106,21 @@ class ClassificationRecord:
 
 @dataclass(slots=True)
 class AppSettings:
-    auto_threshold: float = 0.85
+    auto_threshold: float = 0.88
     review_threshold: float = 0.60
     concurrency: int = 1
+    concurrency_auto: bool = True
     duplicate_policy: str = "重命名"
     file_operation: str = "复制"
     recognition_keywords: list[str] = field(
         default_factory=lambda: ["施工责任人", "施工负责人", "责任人"]
     )
     update_auto_check: bool = True
+    ai_enabled: bool = False
+    ai_provider: str = "zhipu"
+    ai_model: str = "glm-4.6v-flash"
+    ai_timeout_seconds: int = 30
+    ai_max_concurrency: int = 2
 
 
 @dataclass(slots=True)
@@ -114,3 +136,4 @@ class TaskSummary:
     review: int = 0
     unrecognized: int = 0
     failed: int = 0
+    no_watermark: int = 0

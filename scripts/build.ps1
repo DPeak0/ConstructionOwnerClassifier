@@ -32,8 +32,8 @@ if (-not $ReuseEnvironment -or -not (Test-Path $Python)) {
     Assert-NativeSuccess "Upgrading pip"
     & $Python -m pip install -r requirements-build.txt
     Assert-NativeSuccess "Installing build requirements"
-    & $Python -m pip install --no-deps rapidocr-onnxruntime==1.2.3
-    Assert-NativeSuccess "Installing RapidOCR"
+    & $Python -m pip install --no-deps rapidocr==3.9.2
+    Assert-NativeSuccess "Installing RapidOCR with the headless OpenCV runtime"
     & $Python -m pip install --no-deps -e .
     Assert-NativeSuccess "Installing the application"
 }
@@ -61,8 +61,8 @@ if ($Smoke.ExitCode -ne 0) {
 }
 
 $InstalledMB = [math]::Round(((Get-ChildItem $Stage -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB, 1)
-if ($InstalledMB -gt 310) {
-    throw "Installed payload is $InstalledMB MB, above the 310 MB limit."
+if ($InstalledMB -gt 340) {
+    throw "Installed payload is $InstalledMB MB, above the 340 MB limit."
 }
 
 if (-not $BuildInstaller) {
@@ -86,7 +86,7 @@ if (-not $Iscc) {
 
 & $Iscc installer\ConstructionOwnerClassifier.iss
 Assert-NativeSuccess "Compiling the installer"
-$Installer = Join-Path $ProjectRoot "dist\施工责任人图片分类器-Setup-1.1.1.exe"
+$Installer = Join-Path $ProjectRoot "dist\施工责任人图片分类器-Setup-1.1.2.exe"
 if (-not (Test-Path $Installer)) {
     throw "Inno Setup did not create the expected installer."
 }

@@ -10,6 +10,29 @@ from pathlib import Path
 from .models import AppSettings, ClassificationRecord, RecordStatus
 
 
+WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+WINDOWS_INVALID_NAME_CHARACTERS = frozenset('<>:"/\\|?*')
+
+
+def validate_owner_directory_name(value: str) -> str:
+    name = value.strip()
+    if not name:
+        raise ValueError("责任人姓名不能为空")
+    if (
+        name in {".", ".."}
+        or name[-1] in {" ", "."}
+        or any(character in WINDOWS_INVALID_NAME_CHARACTERS for character in name)
+        or any(ord(character) < 32 for character in name)
+        or name.split(".", 1)[0].upper() in WINDOWS_RESERVED_NAMES
+    ):
+        raise ValueError("责任人姓名不能包含路径、控制字符或 Windows 保留名称")
+    return name
+
+
 def sha256_file(path: str | Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
@@ -45,9 +68,19 @@ class ClassificationService:
         return source
 
     def _destination(self, record: ClassificationRecord, owner: str) -> Path:
-        directory = self.output_root / owner
+        owner = validate_owner_directory_name(owner)
+        output_root = self.output_root.resolve()
+        directory = (output_root / owner).resolve()
+        if not directory.is_relative_to(output_root):
+            raise ValueError("分类目录必须位于结果保存目录内")
         directory.mkdir(parents=True, exist_ok=True)
+        if not directory.resolve().is_relative_to(output_root):
+            raise ValueError("分类目录必须位于结果保存目录内")
         source = self._source(record)
+        if record.output_path:
+            current = Path(record.output_path)
+            if current.is_file() and current.parent.resolve() == directory.resolve():
+                return current
         candidate = directory / source.name
         if not candidate.exists():
             return candidate
@@ -70,7 +103,7 @@ class ClassificationService:
         source = self._source(record)
         source_hash = record.sha256 or sha256_file(source)
         if destination.exists() and self.settings.duplicate_policy == "跳过":
-            if self.settings.file_operation == "移动" and sha256_file(destination) != source_hash:
+            if sha256_file(destination) != source_hash:
                 raise FileExistsError(f"目标文件已存在且内容不同，原文件已保留：{destination}")
             record.output_path = str(destination)
             if self.settings.file_operation == "移动" and source.resolve() != destination.resolve():
@@ -82,9 +115,31 @@ class ClassificationService:
                 self._verified_copy(source, destination, source_hash)
             record.output_path = str(destination)
         record.sha256 = source_hash
-        record.owner = "" if target_owner == "未识别" else target_owner
-        record.status = RecordStatus.UNRECOGNIZED if target_owner == "未识别" else RecordStatus.CLASSIFIED
+        record.owner = "" if target_owner in {"未识别", "无水印"} else target_owner
+        if target_owner == "未识别":
+            record.status = RecordStatus.UNRECOGNIZED
+        elif target_owner == "无水印":
+            record.status = RecordStatus.NO_WATERMARK
+        else:
+            record.status = RecordStatus.CLASSIFIED
         record.processed_at = datetime.now().isoformat(timespec="seconds")
+        return record
+
+    def reclassify(self, record: ClassificationRecord, owner: str) -> ClassificationRecord:
+        old_output = Path(record.output_path) if record.output_path else None
+        self.classify(record, owner)
+        new_output = Path(record.output_path)
+        if (
+            old_output
+            and old_output.exists()
+            and old_output.resolve() != new_output.resolve()
+            and old_output.resolve().is_relative_to(self.output_root.resolve())
+        ):
+            old_output.unlink()
+            try:
+                old_output.parent.rmdir()
+            except OSError:
+                pass
         return record
 
     @staticmethod

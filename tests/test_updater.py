@@ -9,6 +9,7 @@ from owner_classifier.updater import (
     MANIFEST_URLS,
     RELEASE_MANIFEST_URL,
     UpdateError,
+    UpdateCancelled,
     UpdateInfo,
     UpdateService,
     version_key,
@@ -119,3 +120,32 @@ def test_update_rejects_tampered_download(tmp_path):
 
 def test_version_comparison_is_numeric():
     assert version_key("v1.10.0") > version_key("1.9.9")
+
+
+def test_update_download_cancellation_removes_partial_file(tmp_path):
+    content = b"first" + b"second"
+    info = UpdateInfo.from_manifest(manifest(content))
+
+    class ChunkedResponse(FakeResponse):
+        def iter_content(self, chunk_size: int):
+            yield b"first"
+            yield b"second"
+
+    class ChunkedSession(FakeSession):
+        def get(self, url, **kwargs):
+            return ChunkedResponse(content=content)
+
+    progress = []
+    service = UpdateService(
+        session=ChunkedSession(content), download_relays=(), update_dir=tmp_path,
+    )
+
+    with pytest.raises(UpdateCancelled):
+        service.download(
+            info,
+            lambda current, total: progress.append(current),
+            cancelled=lambda: bool(progress),
+        )
+
+    assert not list(tmp_path.glob("*.part"))
+    assert not list(tmp_path.glob("*.exe"))

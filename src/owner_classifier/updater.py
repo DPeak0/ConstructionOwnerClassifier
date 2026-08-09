@@ -39,6 +39,10 @@ class UpdateError(RuntimeError):
     pass
 
 
+class UpdateCancelled(UpdateError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class UpdateInfo:
     version: str
@@ -113,11 +117,18 @@ class UpdateService:
             "User-Agent": "ConstructionOwnerClassifier-Updater",
         }
 
-    def check_for_update(self, current_version: str) -> UpdateInfo | None:
+    def check_for_update(
+        self,
+        current_version: str,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> UpdateInfo | None:
         errors: list[str] = []
         cache_buster = int(time.time() // 300)
+        is_cancelled = cancelled or (lambda: False)
 
         def fetch(source: str) -> UpdateInfo:
+            if is_cancelled():
+                raise UpdateCancelled("更新检查已取消")
             separator = "&" if "?" in source else "?"
             response = self.session.get(
                 f"{source}{separator}check={cache_buster}",
@@ -125,8 +136,12 @@ class UpdateService:
                 timeout=(5, 12),
             )
             response.raise_for_status()
+            if is_cancelled():
+                raise UpdateCancelled("更新检查已取消")
             return UpdateInfo.from_manifest(response.json())
 
+        if is_cancelled():
+            raise UpdateCancelled("更新检查已取消")
         valid_current = False
         with ThreadPoolExecutor(max_workers=max(1, len(self.manifest_urls))) as executor:
             futures = {executor.submit(fetch, source): source for source in self.manifest_urls}
@@ -134,9 +149,17 @@ class UpdateService:
                 source = futures[future]
                 try:
                     info = future.result()
+                    if is_cancelled():
+                        for pending in futures:
+                            pending.cancel()
+                        raise UpdateCancelled("更新检查已取消")
                     if version_key(info.version) > version_key(current_version):
                         return info
                     valid_current = True
+                except UpdateCancelled:
+                    for pending in futures:
+                        pending.cancel()
+                    raise
                 except (requests.RequestException, ValueError, TypeError, UpdateError) as exc:
                     errors.append(f"{urlparse(source).hostname}: {exc}")
         if valid_current:
@@ -148,6 +171,7 @@ class UpdateService:
         self,
         info: UpdateInfo,
         progress: Callable[[int, int], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> Path:
         self.update_dir.mkdir(parents=True, exist_ok=True)
         target = self.update_dir / info.installer_name
@@ -156,7 +180,10 @@ class UpdateService:
             f"{relay}{info.installer_url}" for relay in self.download_relays
         )
         errors: list[str] = []
+        is_cancelled = cancelled or (lambda: False)
         for source in sources:
+            if is_cancelled():
+                raise UpdateCancelled("更新下载已取消")
             digest = hashlib.sha256()
             downloaded = 0
             try:
@@ -170,6 +197,8 @@ class UpdateService:
                 response.raise_for_status()
                 with partial.open("wb") as stream:
                     for chunk in response.iter_content(chunk_size=1024 * 256):
+                        if is_cancelled():
+                            raise UpdateCancelled("更新下载已取消")
                         if not chunk:
                             continue
                         stream.write(chunk)
@@ -183,6 +212,9 @@ class UpdateService:
                     raise UpdateError("SHA-256 校验失败")
                 partial.replace(target)
                 return target
+            except UpdateCancelled:
+                partial.unlink(missing_ok=True)
+                raise
             except (OSError, requests.RequestException, UpdateError) as exc:
                 errors.append(f"{urlparse(source).hostname}: {exc}")
                 partial.unlink(missing_ok=True)

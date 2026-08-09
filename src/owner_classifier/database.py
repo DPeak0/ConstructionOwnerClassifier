@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import Iterable
 
 from .models import AppSettings, ClassificationRecord, RecordStatus, TaskSummary
+from .services import validate_owner_directory_name
 
 
 DEFAULT_OWNERS = ["刘纪林", "吴万松", "吴绘其", "曹华兵", "郭成喜", "陈万智"]
-DEFAULT_OWNER_ALIASES = {"曹华兵": ["曹华斌"]}
+DEFAULT_OWNER_ALIASES: dict[str, list[str]] = {}
 
 
 def default_data_dir() -> Path:
@@ -59,6 +60,7 @@ class Database:
                 source_path TEXT NOT NULL,
                 owner TEXT NOT NULL DEFAULT '',
                 candidate_owner TEXT NOT NULL DEFAULT '',
+                candidate_owners TEXT NOT NULL DEFAULT '[]',
                 confidence REAL NOT NULL DEFAULT 0,
                 local_confidence REAL NOT NULL DEFAULT 0,
                 ocr_text TEXT NOT NULL DEFAULT '',
@@ -71,18 +73,43 @@ class Database:
                 sha256 TEXT NOT NULL DEFAULT '',
                 reviewed INTEGER NOT NULL DEFAULT 0,
                 processed_at TEXT NOT NULL DEFAULT '',
+                watermark_score REAL NOT NULL DEFAULT 0,
+                owner_margin REAL NOT NULL DEFAULT 0,
+                recognition_evidence TEXT NOT NULL DEFAULT '',
+                ai_used INTEGER NOT NULL DEFAULT 0,
+                ai_provider TEXT NOT NULL DEFAULT '',
+                ai_model TEXT NOT NULL DEFAULT '',
+                ai_decision TEXT NOT NULL DEFAULT '',
+                ai_latency_ms INTEGER NOT NULL DEFAULT 0,
+                ai_error TEXT NOT NULL DEFAULT '',
+                decision_source TEXT NOT NULL DEFAULT 'local',
                 UNIQUE(task_id, source_path),
                 FOREIGN KEY(task_id) REFERENCES tasks(id)
             );
             """
         )
         record_columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(records)")}
-        if "ocr_blocks" not in record_columns:
-            self.connection.execute("ALTER TABLE records ADD COLUMN ocr_blocks TEXT NOT NULL DEFAULT ''")
+        migrations = {
+            "ocr_blocks": "TEXT NOT NULL DEFAULT ''",
+            "candidate_owners": "TEXT NOT NULL DEFAULT '[]'",
+            "watermark_score": "REAL NOT NULL DEFAULT 0",
+            "owner_margin": "REAL NOT NULL DEFAULT 0",
+            "recognition_evidence": "TEXT NOT NULL DEFAULT ''",
+            "ai_used": "INTEGER NOT NULL DEFAULT 0",
+            "ai_provider": "TEXT NOT NULL DEFAULT ''",
+            "ai_model": "TEXT NOT NULL DEFAULT ''",
+            "ai_decision": "TEXT NOT NULL DEFAULT ''",
+            "ai_latency_ms": "INTEGER NOT NULL DEFAULT 0",
+            "ai_error": "TEXT NOT NULL DEFAULT ''",
+            "decision_source": "TEXT NOT NULL DEFAULT 'local'",
+        }
+        for column, definition in migrations.items():
+            if column not in record_columns:
+                self.connection.execute(f"ALTER TABLE records ADD COLUMN {column} {definition}")
         owner_columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(owners)")}
         if "aliases" not in owner_columns:
             self.connection.execute("ALTER TABLE owners ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'")
-        self._migrate_cao_owner()
+        self._separate_legacy_cao_alias_once()
         count = self.connection.execute("SELECT COUNT(*) FROM owners").fetchone()[0]
         if count == 0:
             now = datetime.now().isoformat(timespec="seconds")
@@ -92,28 +119,29 @@ class Database:
             )
         self.connection.commit()
 
-    def _migrate_cao_owner(self) -> None:
-        wrong = self.connection.execute("SELECT id, aliases FROM owners WHERE name = ?", ("曹华斌",)).fetchone()
-        canonical = self.connection.execute("SELECT id, aliases FROM owners WHERE name = ?", ("曹华兵",)).fetchone()
-        if not wrong:
+    def _separate_legacy_cao_alias_once(self) -> None:
+        migration_key = "migration_distinct_cao_names_v1"
+        migrated = self.connection.execute(
+            "SELECT 1 FROM settings WHERE key = ?", (migration_key,)
+        ).fetchone()
+        if migrated:
             return
-        if canonical:
-            aliases = self._decode_aliases(canonical["aliases"])
-            if "曹华斌" not in aliases:
-                aliases.append("曹华斌")
+        owner = self.connection.execute(
+            "SELECT id, aliases FROM owners WHERE name = ?", ("曹华兵",)
+        ).fetchone()
+        if owner:
+            aliases = [
+                alias for alias in self._decode_aliases(owner["aliases"])
+                if alias != "曹华斌"
+            ]
             self.connection.execute(
                 "UPDATE owners SET aliases = ? WHERE id = ?",
-                (json.dumps(aliases, ensure_ascii=False), canonical["id"]),
+                (json.dumps(aliases, ensure_ascii=False), owner["id"]),
             )
-            self.connection.execute("DELETE FROM owners WHERE id = ?", (wrong["id"],))
-        else:
-            aliases = self._decode_aliases(wrong["aliases"])
-            if "曹华斌" not in aliases:
-                aliases.append("曹华斌")
-            self.connection.execute(
-                "UPDATE owners SET name = ?, aliases = ? WHERE id = ?",
-                ("曹华兵", json.dumps(aliases, ensure_ascii=False), wrong["id"]),
-            )
+        self.connection.execute(
+            "INSERT INTO settings(key, value) VALUES (?, ?)",
+            (migration_key, "1"),
+        )
 
     @staticmethod
     def _decode_aliases(value: str) -> list[str]:
@@ -124,14 +152,29 @@ class Database:
         return [str(item).strip() for item in data if str(item).strip()]
 
     @staticmethod
+    def _decode_candidates(value: str) -> list[tuple[str, float]]:
+        try:
+            data = json.loads(value or "[]")
+        except (TypeError, json.JSONDecodeError):
+            data = []
+        candidates: list[tuple[str, float]] = []
+        for item in data if isinstance(data, list) else []:
+            try:
+                name, score = item
+                name = str(name).strip()
+                if name:
+                    candidates.append((name, max(0.0, min(float(score), 1.0))))
+            except (TypeError, ValueError):
+                continue
+        return candidates
+
+    @staticmethod
     def _normalized_name(value: str) -> str:
         return unicodedata.normalize("NFKC", value).strip().casefold()
 
     def _validate_owner(self, name: str, aliases: Iterable[str], exclude_id: int | None = None) -> tuple[str, list[str]]:
-        canonical = name.strip()
+        canonical = validate_owner_directory_name(name)
         cleaned_aliases = list(dict.fromkeys(alias.strip() for alias in aliases if alias.strip()))
-        if not canonical:
-            raise ValueError("责任人姓名不能为空")
         values = [canonical, *cleaned_aliases]
         normalized = [self._normalized_name(value) for value in values]
         if len(set(normalized)) != len(normalized):
@@ -230,27 +273,40 @@ class Database:
             raise ValueError("记录缺少任务编号")
         values = (
             record.task_id, record.source_path, record.owner, record.candidate_owner,
+            json.dumps(record.candidate_owners, ensure_ascii=False),
             record.confidence, record.local_confidence,
             record.ocr_text, record.ocr_blocks, record.ocr_engine, record.rotation, str(record.status),
             record.output_path, record.error, record.sha256, int(record.reviewed),
             record.processed_at,
+            record.watermark_score, record.owner_margin, record.recognition_evidence,
+            int(record.ai_used), record.ai_provider, record.ai_model, record.ai_decision,
+            record.ai_latency_ms, record.ai_error, record.decision_source,
         )
         self.connection.execute(
             """
             INSERT INTO records(
-                task_id, source_path, owner, candidate_owner, confidence,
+                task_id, source_path, owner, candidate_owner, candidate_owners,
+                confidence,
                 local_confidence, ocr_text, ocr_blocks, ocr_engine,
-                rotation, status, output_path, error, sha256, reviewed, processed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                rotation, status, output_path, error, sha256, reviewed, processed_at,
+                watermark_score, owner_margin, recognition_evidence, ai_used,
+                ai_provider, ai_model, ai_decision, ai_latency_ms, ai_error, decision_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(task_id, source_path) DO UPDATE SET
                 owner=excluded.owner, candidate_owner=excluded.candidate_owner,
+                candidate_owners=excluded.candidate_owners,
                 confidence=excluded.confidence, local_confidence=excluded.local_confidence,
                 ocr_text=excluded.ocr_text,
                 ocr_blocks=excluded.ocr_blocks,
                 ocr_engine=excluded.ocr_engine, rotation=excluded.rotation,
                 status=excluded.status, output_path=excluded.output_path,
                 error=excluded.error, sha256=excluded.sha256,
-                reviewed=excluded.reviewed, processed_at=excluded.processed_at
+                reviewed=excluded.reviewed, processed_at=excluded.processed_at,
+                watermark_score=excluded.watermark_score, owner_margin=excluded.owner_margin,
+                recognition_evidence=excluded.recognition_evidence, ai_used=excluded.ai_used,
+                ai_provider=excluded.ai_provider, ai_model=excluded.ai_model,
+                ai_decision=excluded.ai_decision, ai_latency_ms=excluded.ai_latency_ms,
+                ai_error=excluded.ai_error, decision_source=excluded.decision_source
             """,
             values,
         )
@@ -278,7 +334,8 @@ class Database:
                    SUM(CASE WHEN r.status = ? THEN 1 ELSE 0 END) AS classified,
                    SUM(CASE WHEN r.status = ? THEN 1 ELSE 0 END) AS review,
                    SUM(CASE WHEN r.status = ? THEN 1 ELSE 0 END) AS unrecognized,
-                   SUM(CASE WHEN r.status = ? THEN 1 ELSE 0 END) AS failed
+                   SUM(CASE WHEN r.status = ? THEN 1 ELSE 0 END) AS failed,
+                   SUM(CASE WHEN r.status = ? THEN 1 ELSE 0 END) AS no_watermark
             FROM tasks t
             LEFT JOIN records r ON r.task_id = t.id
             GROUP BY t.id
@@ -287,7 +344,8 @@ class Database:
             """,
             (
                 str(RecordStatus.CLASSIFIED), str(RecordStatus.REVIEW),
-                str(RecordStatus.UNRECOGNIZED), str(RecordStatus.FAILED), limit,
+                str(RecordStatus.UNRECOGNIZED), str(RecordStatus.FAILED),
+                str(RecordStatus.NO_WATERMARK), limit,
             ),
         ).fetchall()
         return [
@@ -297,6 +355,7 @@ class Database:
                 total=int(row["total"] or 0), classified=int(row["classified"] or 0),
                 review=int(row["review"] or 0), unrecognized=int(row["unrecognized"] or 0),
                 failed=int(row["failed"] or 0),
+                no_watermark=int(row["no_watermark"] or 0),
             )
             for row in rows
         ]
@@ -315,12 +374,18 @@ class Database:
                 ClassificationRecord(
                     source_path=row["source_path"], owner=row["owner"],
                     candidate_owner=row["candidate_owner"], confidence=row["confidence"],
+                    candidate_owners=self._decode_candidates(row["candidate_owners"]),
                     local_confidence=row["local_confidence"],
                     ocr_text=row["ocr_text"], ocr_blocks=row["ocr_blocks"],
                     ocr_engine=row["ocr_engine"], rotation=row["rotation"],
                     status=status, output_path=row["output_path"], error=row["error"],
                     sha256=row["sha256"], reviewed=bool(row["reviewed"]),
                     processed_at=row["processed_at"], record_id=row["id"], task_id=row["task_id"],
+                    watermark_score=row["watermark_score"], owner_margin=row["owner_margin"],
+                    recognition_evidence=row["recognition_evidence"], ai_used=bool(row["ai_used"]),
+                    ai_provider=row["ai_provider"], ai_model=row["ai_model"],
+                    ai_decision=row["ai_decision"], ai_latency_ms=row["ai_latency_ms"],
+                    ai_error=row["ai_error"], decision_source=row["decision_source"],
                 )
             )
         return records
