@@ -84,9 +84,10 @@ class SettingsPage(QWidget):
     owners_changed = Signal()
     update_available = Signal(str)
 
-    def __init__(self, database: Database, parent=None) -> None:
+    def __init__(self, database: Database, parent=None, show_header: bool = True) -> None:
         super().__init__(parent)
         self.database = database
+        self.show_header = show_header
         self.settings = database.load_settings()
         self.update_service = UpdateService()
         self.update_check_worker: UpdateCheckWorker | None = None
@@ -103,14 +104,15 @@ class SettingsPage(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(26, 22, 26, 22)
+        root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(14)
-        heading = QLabel("设置")
-        heading.setObjectName("pageTitle")
-        root.addWidget(heading)
-        subtitle = QLabel("更改会自动保存并立即用于后续识别")
-        subtitle.setObjectName("pageSubtitle")
-        root.addWidget(subtitle)
+        if self.show_header:
+            heading = QLabel("设置")
+            heading.setObjectName("pageTitle")
+            root.addWidget(heading)
+            subtitle = QLabel("更改会自动保存并立即用于后续识别")
+            subtitle.setObjectName("pageSubtitle")
+            root.addWidget(subtitle)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._owner_tab(), "责任人名单")
@@ -427,3 +429,25 @@ class SettingsPage(QWidget):
         self.download_update_button.setEnabled(True)
         self.check_update_button.setEnabled(True)
         QMessageBox.warning(self, "下载更新失败", message)
+
+    def shutdown(self) -> None:
+        self._keyword_save_timer.stop()
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, database: Database, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("设置")
+        self.setModal(True)
+        self.resize(880, 680)
+        self.setMinimumSize(760, 580)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 14)
+        layout.setSpacing(8)
+        self.page = SettingsPage(database, self, show_header=False)
+        layout.addWidget(self.page, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)

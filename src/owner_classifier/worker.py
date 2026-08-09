@@ -67,10 +67,11 @@ class BatchWorker(QThread):
 
     def run(self) -> None:
         service = ClassificationService(self.output_root, self.settings)
-        records: list[ClassificationRecord] = []
+        database: Database | None = None
         completed = 0
         futures: dict[Future[ClassificationRecord], int] = {}
         try:
+            database = Database(self.database.path)
             with ThreadPoolExecutor(max_workers=max(1, min(self.settings.concurrency, 4))) as executor:
                 for index, path in enumerate(self.images):
                     if self._cancelled.is_set():
@@ -95,27 +96,32 @@ class BatchWorker(QThread):
                             service.classify(record, record.owner)
                         elif record.status == RecordStatus.UNRECOGNIZED:
                             service.classify(record, "未识别")
-                        self.database.save_record(record)
-                        records.append(record)
+                        database.save_record(record)
                         self.record_ready.emit(record, index)
                     except Exception as exc:
                         record = ClassificationRecord(
                             source_path=str(self.images[index]), task_id=self.task_id,
                             status=RecordStatus.FAILED, error=str(exc),
                         )
-                        self.database.save_record(record)
-                        records.append(record)
+                        database.save_record(record)
                         self.record_ready.emit(record, index)
                     completed += 1
                     self.progress_changed.emit(completed, len(self.images))
 
-            all_records = self.database.task_records(self.task_id)
+            all_records = database.task_records(self.task_id)
             if self._cancelled.is_set():
-                self.database.update_task_status(self.task_id, "已取消")
+                database.update_task_status(self.task_id, "已取消")
                 self.batch_finished.emit(False, "任务已取消，已保留完成记录")
             else:
-                self.database.update_task_status(self.task_id, "待复核" if any(r.status == RecordStatus.REVIEW for r in all_records) else "已完成")
+                database.update_task_status(self.task_id, "待复核" if any(r.status == RecordStatus.REVIEW for r in all_records) else "已完成")
                 self.batch_finished.emit(True, "识别完成")
         except Exception as exc:
-            self.database.update_task_status(self.task_id, "失败")
+            if database is not None:
+                try:
+                    database.update_task_status(self.task_id, "失败")
+                except Exception:
+                    pass
             self.batch_error.emit(str(exc))
+        finally:
+            if database is not None:
+                database.close()

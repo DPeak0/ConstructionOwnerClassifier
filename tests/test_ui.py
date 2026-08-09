@@ -19,7 +19,7 @@ def application() -> QApplication:
     return QApplication.instance() or QApplication([])
 
 
-def test_main_window_has_only_task_review_and_settings(monkeypatch, tmp_path: Path):
+def test_main_window_uses_single_page_dashboard_and_settings_dialog(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
     app = application()
     window = MainWindow()
@@ -27,13 +27,19 @@ def test_main_window_has_only_task_review_and_settings(monkeypatch, tmp_path: Pa
     window.show()
     app.processEvents()
 
-    assert window.pages.count() == 3
-    assert [button.text().split()[0] for button in window.nav_buttons] == ["分类任务", "待复核", "设置"]
+    assert not hasattr(window, "pages")
+    assert not hasattr(window, "nav_buttons")
+    assert window.table.columnCount() == 2
+    assert [window.table.horizontalHeaderItem(i).text() for i in range(2)] == ["文件名", "状态"]
+    assert not hasattr(window, "review_table")
+    assert not hasattr(window, "ocr_text")
+    assert window.settings_dialog.isModal()
     assert window.settings_page.tabs.count() == 3
     assert [window.settings_page.tabs.tabText(i) for i in range(3)] == ["责任人名单", "识别设置", "软件更新"]
     assert not hasattr(window, "export_button")
     assert not hasattr(window.settings_page, "save_button")
-    assert window.table.width() > 700
+    assert window.table.width() > 300
+    assert window.preview.width() > window.table.width()
     window.close()
 
 
@@ -151,12 +157,78 @@ def test_review_confirmation_selects_and_displays_next_image(monkeypatch, tmp_pa
     window._refresh_review_table()
     assert window.preview.current_source == str(first_path)
 
-    window._confirm_review()
+    window.table.setFocus()
+    QTest.keyClick(window.table, Qt.Key_Return)
     app.processEvents()
 
     assert window._selected_review_index() == 1
     assert window.preview.current_source == str(second_path)
-    assert window.review_detail.text().startswith("second.png")
+    assert window.selected_file_label.text() == "second.png"
+    window.close()
+
+
+def test_dashboard_keyboard_navigation_rotation_and_filter(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    app = application()
+    first_path = tmp_path / "first.png"
+    second_path = tmp_path / "second.png"
+    Image.new("RGB", (120, 80), "red").save(first_path)
+    Image.new("RGB", (80, 120), "blue").save(second_path)
+
+    window = MainWindow()
+    window.records = [
+        ClassificationRecord(str(first_path), status=RecordStatus.CLASSIFIED),
+        ClassificationRecord(str(second_path), status=RecordStatus.REVIEW),
+    ]
+    window._populate_task_table()
+    window.table.selectRow(0)
+    window.table.setFocus()
+    window.show()
+    app.processEvents()
+
+    QTest.keyClick(window.table, Qt.Key_Down)
+    app.processEvents()
+    assert window._selected_record_index() == 1
+    assert window.preview.current_source == str(second_path)
+
+    window.preview.setFocus()
+    QTest.keyClick(window.preview, Qt.Key_R)
+    app.processEvents()
+    assert window.preview.view_rotation == 90
+
+    window.status_filter.setCurrentIndex(window.status_filter.findData("classified"))
+    app.processEvents()
+    assert not window.table.isRowHidden(0)
+    assert window.table.isRowHidden(1)
+    window.close()
+
+
+def test_review_remains_available_while_batch_is_running(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    app = application()
+    image_path = tmp_path / "review.png"
+    Image.new("RGB", (80, 60), "white").save(image_path)
+    output = tmp_path / "output"
+    output.mkdir()
+
+    window = MainWindow()
+    window.current_task_id = window.database.create_task(str(tmp_path), str(output))
+    window.session_output = output
+    window.records = [
+        ClassificationRecord(
+            str(image_path), candidate_owner="刘纪林", confidence=0.7,
+            status=RecordStatus.REVIEW, task_id=window.current_task_id,
+        )
+    ]
+    window.worker = FakeRunningWorker()
+    window._populate_task_table()
+    window.table.selectRow(0)
+    app.processEvents()
+
+    assert window.confirm_button.isEnabled()
+    assert window.owner_combo.isEnabled()
+
+    window.worker.running = False
     window.close()
 
 
