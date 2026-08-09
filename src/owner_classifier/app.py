@@ -275,6 +275,8 @@ class MainWindow(QMainWindow):
         self.session_output: Path | None = None
         self.worker: BatchWorker | None = None
         self.paused = False
+        self._close_after_worker = False
+        self._database_closed = False
 
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.resize(1440, 880)
@@ -711,6 +713,9 @@ class MainWindow(QMainWindow):
 
     def _batch_error(self, message: str) -> None:
         self._set_idle_controls()
+        if self._close_after_worker:
+            self.status_label.setText("任务已中断，正在退出…")
+            return
         self.status_label.setText("任务失败")
         QMessageBox.critical(self, "识别失败", message)
 
@@ -858,11 +863,44 @@ class MainWindow(QMainWindow):
         self.version_button.setText(f"版本 {__version__}\n可更新至 {version}")
         self.version_button.setStyleSheet("color:#ffd27a; font-weight:600;")
 
+    def _confirm_cancel_and_close(self) -> bool:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Warning)
+        dialog.setWindowTitle("识别任务正在运行")
+        dialog.setText("识别尚未完成，是否中断任务并退出？")
+        dialog.setInformativeText(
+            "已完成的文件会保留；当前正在处理的文件将在安全结束后退出，不会直接强制终止文件操作。"
+        )
+        exit_button = dialog.addButton("中断并退出", QMessageBox.DestructiveRole)
+        continue_button = dialog.addButton("继续识别", QMessageBox.RejectRole)
+        dialog.setDefaultButton(continue_button)
+        dialog.exec()
+        return dialog.clickedButton() is exit_button
+
+    def _finish_pending_close(self) -> None:
+        if self._close_after_worker and not (self.worker and self.worker.isRunning()):
+            QTimer.singleShot(0, self.close)
+
     def closeEvent(self, event) -> None:
         if self.worker and self.worker.isRunning():
+            if self._close_after_worker:
+                event.ignore()
+                return
+            if not self._confirm_cancel_and_close():
+                event.ignore()
+                return
+            self._close_after_worker = True
+            self.worker.finished.connect(self._finish_pending_close)
             self.worker.cancel()
-            self.worker.wait(5000)
-        self.database.close()
+            self.centralWidget().setEnabled(False)
+            self.status_label.setText("正在安全中断，当前文件处理完成后将自动退出…")
+            if not self.worker.isRunning():
+                QTimer.singleShot(0, self.close)
+            event.ignore()
+            return
+        if not self._database_closed:
+            self.database.close()
+            self._database_closed = True
         event.accept()
 
 

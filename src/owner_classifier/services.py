@@ -79,7 +79,7 @@ class ClassificationService:
             if self.settings.file_operation == "移动":
                 self._verified_move(source, destination, source_hash)
             else:
-                shutil.copy2(source, destination)
+                self._verified_copy(source, destination, source_hash)
             record.output_path = str(destination)
         record.sha256 = source_hash
         record.owner = "" if target_owner == "未识别" else target_owner
@@ -88,7 +88,7 @@ class ClassificationService:
         return record
 
     @staticmethod
-    def _verified_move(source: Path, destination: Path, source_hash: str) -> None:
+    def _verified_copy(source: Path, destination: Path, source_hash: str) -> None:
         if source.resolve() == destination.resolve():
             return
         temporary: Path | None = None
@@ -103,13 +103,19 @@ class ClassificationService:
                 os.fsync(target.fileno())
             shutil.copystat(source, temporary)
             if temporary.stat().st_size != source.stat().st_size or sha256_file(temporary) != source_hash:
-                raise OSError("移动后的文件校验失败，原文件已保留")
+                raise OSError("写入后的文件校验失败，源文件已保留")
             os.replace(temporary, destination)
             temporary = None
             if sha256_file(destination) != source_hash:
-                raise OSError("目标文件校验失败，原文件已保留")
-            source.unlink()
+                raise OSError("目标文件校验失败，源文件已保留")
         except Exception:
             if temporary and temporary.exists():
                 temporary.unlink()
             raise
+
+    @classmethod
+    def _verified_move(cls, source: Path, destination: Path, source_hash: str) -> None:
+        if source.resolve() == destination.resolve():
+            return
+        cls._verified_copy(source, destination, source_hash)
+        source.unlink()

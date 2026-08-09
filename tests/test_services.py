@@ -60,6 +60,44 @@ def test_failed_move_keeps_original(monkeypatch, tmp_path: Path):
     assert not list((tmp_path / "out" / "张三").glob("*.tmp"))
 
 
+def test_interrupted_copy_keeps_source_and_removes_partial_file(monkeypatch, tmp_path: Path):
+    source = tmp_path / "source.jpg"
+    source.write_bytes(b"must survive")
+    service = ClassificationService(tmp_path / "out", AppSettings(file_operation="移动"))
+
+    def interrupted_copy(source_stream, target_stream, length):
+        target_stream.write(source_stream.read(4))
+        raise OSError("interrupted")
+
+    monkeypatch.setattr("owner_classifier.services.shutil.copyfileobj", interrupted_copy)
+    with pytest.raises(OSError, match="interrupted"):
+        service.classify(ClassificationRecord(str(source)), "张三")
+
+    assert source.read_bytes() == b"must survive"
+    assert not (tmp_path / "out" / "张三" / "source.jpg").exists()
+    assert not list((tmp_path / "out" / "张三").glob("*.tmp"))
+
+
+def test_source_delete_failure_leaves_verified_destination(monkeypatch, tmp_path: Path):
+    source = tmp_path / "source.jpg"
+    content = b"must exist in at least one location"
+    source.write_bytes(content)
+    service = ClassificationService(tmp_path / "out", AppSettings(file_operation="移动"))
+    original_unlink = Path.unlink
+
+    def fail_source_delete(path, *args, **kwargs):
+        if path == source:
+            raise OSError("source locked")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_source_delete)
+    with pytest.raises(OSError, match="source locked"):
+        service.classify(ClassificationRecord(str(source)), "张三")
+
+    assert source.read_bytes() == content
+    assert (tmp_path / "out" / "张三" / "source.jpg").read_bytes() == content
+
+
 def test_review_can_move_file_from_unrecognized_directory(tmp_path: Path):
     source = tmp_path / "source.jpg"
     source.write_bytes(b"photo")

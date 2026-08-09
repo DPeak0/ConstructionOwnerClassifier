@@ -83,6 +83,10 @@ class BatchWorker(QThread):
                             pending.cancel()
                         break
                     self._resume.wait()
+                    if self._cancelled.is_set():
+                        for pending in futures:
+                            pending.cancel()
+                        break
                     index = futures[future]
                     try:
                         record = future.result()

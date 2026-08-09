@@ -5,7 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtCore import QObject, QPoint, QPointF, Qt, Signal
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 from PIL import Image
@@ -62,6 +62,63 @@ def test_native_path_text_uses_platform_separators():
     if os.name == "nt":
         assert result == r"C:\work\photos"
         assert "/" not in result
+
+
+class FakeRunningWorker(QObject):
+    finished = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.running = True
+        self.cancelled = False
+
+    def isRunning(self) -> bool:
+        return self.running
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+def test_close_during_recognition_can_continue(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    app = application()
+    window = MainWindow()
+    worker = FakeRunningWorker()
+    window.worker = worker
+    monkeypatch.setattr(window, "_confirm_cancel_and_close", lambda: False)
+    window.show()
+    app.processEvents()
+
+    assert window.close() is False
+    assert worker.cancelled is False
+    assert window.isVisible()
+
+    worker.running = False
+    window.close()
+
+
+def test_close_during_recognition_waits_for_safe_worker_stop(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    app = application()
+    window = MainWindow()
+    worker = FakeRunningWorker()
+    window.worker = worker
+    monkeypatch.setattr(window, "_confirm_cancel_and_close", lambda: True)
+    window.show()
+    app.processEvents()
+
+    assert window.close() is False
+    assert worker.cancelled is True
+    assert window.isVisible()
+    assert window._database_closed is False
+    assert "安全中断" in window.status_label.text()
+
+    worker.running = False
+    worker.finished.emit()
+    app.processEvents()
+    app.processEvents()
+    assert not window.isVisible()
+    assert window._database_closed is True
 
 
 def test_review_confirmation_selects_and_displays_next_image(monkeypatch, tmp_path: Path):
